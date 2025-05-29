@@ -20,6 +20,18 @@ type DecompressRequest struct {
 	Separate bool   `json:"separate"`
 }
 
+func GetCompressorRoutes() *http.ServeMux {
+	router := http.NewServeMux()
+	router.HandleFunc("POST /", HandleCompress)
+	return router
+}
+
+func GetDecompressorRoutes() *http.ServeMux {
+	router := http.NewServeMux()
+	router.HandleFunc("POST /", HandleDecompress)
+	return router
+}
+
 func HandleCompress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
