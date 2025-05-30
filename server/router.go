@@ -10,8 +10,7 @@ type TartarusRouter struct{}
 
 func (app *TartarusRouter) ApiRouter() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/compress/", http.StripPrefix("/compress", api.GetCompressorRoutes()))
-	mux.Handle("/decompress/", http.StripPrefix("/decompress", api.GetDecompressorRoutes()))
+	mux.Handle("/thanatos/", http.StripPrefix("/thanatos", api.GetArchiveRouter()))
 	return mux
 }
 
