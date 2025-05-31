@@ -10,7 +10,7 @@ type TartarusRouter struct{}
 
 func (app *TartarusRouter) ApiRouter() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/thanatos/", http.StripPrefix("/thanatos", api.GetArchiveRouter()))
+	mux.Handle("/archive/", http.StripPrefix("/archive", api.GetArchiveRouter()))
 	return mux
 }
 
