@@ -16,11 +16,11 @@
 | build | patch |
 | chore | patch |
 | cicd | patch |
-| docs | patch |
 | fix | patch |
 | perf | patch |
 | refactor | patch |
 | revert | patch |
 | style | patch |
-| test | patch |
+| docs | none |
+| test | none |
 
