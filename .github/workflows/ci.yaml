@@ -1,85 +1,110 @@
-name: CI/CD
+name: CI/CD Pipeline
+
+permissions:
+  contents: write
+  packages: write
 
 on:
   push:
-    branches:
-      - main
+    branches: [master]
+  pull_request:
+    branches: [master]
 
 jobs:
-  test-build-tag-push:
+  validate-commit:
     runs-on: ubuntu-latest
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository }}
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
+
+      - name: Extract commit message
+        id: commit
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+
+      - name: Validate commit prefix
+        run: |
+          COMMIT_MSG="${{ steps.commit.outputs.message }}"
+          echo "Commit message: $COMMIT_MSG"
+
+          shopt -s nocasematch
+
+          if [[ "$COMMIT_MSG" =~ ^merge ]]; then
+            echo "ℹ️ Merge commit detected — skipping validation."
+            exit 0
+          fi
+
+          if [[ "$COMMIT_MSG" =~ ^(epic|major|feat|fix|build|chore|perf|refactor|revert|style|cicd|docs|test)\b ]]; then
+            echo "✅ Valid commit prefix"
+          else
+            echo "❌ Invalid commit prefix"
+            exit 1
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    needs: validate-commit
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24
+      - run: go test ./...
+
+  build-and-release:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v3
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: 1.24
 
-      - name: Run tests
-        run: go test ./...
+      - name: Extract commit message
+        id: commit
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
 
-      - name: Build binary
-        run: go build -o app ./...
+      - name: Skip version bump for docs/test/Merge
+        if: startsWith(steps.commit.outputs.message, 'docs') || startsWith(steps.commit.outputs.message, 'test') || startsWith(steps.commit.outputs.message, 'Merge')
+        run: echo "Skipping version bump and Docker image for docs/test/Merge commit" && exit 0
 
       - name: Get latest tag
-        id: get_tag
+        id: version
         run: |
           git fetch --tags
-          TAG=$(git tag --sort=-v:refname | head -n 1)
-          if [[ -z "$TAG" ]]; then
-            echo "version=0.0.0" >> $GITHUB_OUTPUT
-          else
-            echo "version=$TAG" >> $GITHUB_OUTPUT
-          fi
+          latest=$(git tag --sort=-v:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+          latest=${latest#v}
+          echo "latest=$latest" >> $GITHUB_OUTPUT
 
-      - name: Validate commit message prefix
-        id: commit_check
+      - name: Calculate next version
+        id: semver
         run: |
-          msg=$(git log -1 --pretty=%B | tr '[:upper:]' '[:lower:]')
-          echo "commit_msg=$msg" >> $GITHUB_OUTPUT
+          IFS='.' read -r major minor patch <<< "${{ steps.version.outputs.latest || '0.0.0' }}"
+          prefix="${{ steps.commit.outputs.message }}"
 
-          if [[ "$msg" =~ ^(epic|major|feat|fix|build|chore|docs|perf|refactor|revert|style|test|cicd) ]]; then
-            echo "Commit message prefix is valid: $msg"
-          else
-            echo "❌ Invalid commit prefix: $msg"
-            exit 1
-          fi
+          case "$prefix" in
+            epic*|major*) major=$((major + 1)); minor=0; patch=0 ;;
+            feat*) minor=$((minor + 1)); patch=0 ;;
+            fix*|build*|chore*|perf*|refactor*|revert*|style*|cicd*) patch=$((patch + 1)) ;;
+            docs*|test*|Merge*) echo "No version bump"; exit 0 ;;
+            *) echo "Invalid commit prefix"; exit 1 ;;
+          esac
 
-      - name: Determine new version
-        id: versioning
+          new_version="$major.$minor.$patch"
+          echo "version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Tag commit and push
         run: |
-          version="${{ steps.get_tag.outputs.version }}"
-          major=$(echo $version | cut -d. -f1)
-          minor=$(echo $version | cut -d. -f2)
-          patch=$(echo $version | cut -d. -f3)
-          msg="${{ steps.commit_check.outputs.commit_msg }}"
-
-          if [[ "$msg" == epic* || "$msg" == major* ]]; then
-            major=$((major + 1))
-            minor=0
-            patch=0
-          elif [[ "$msg" == feat* ]]; then
-            minor=$((minor + 1))
-            patch=0
-          else
-            patch=$((patch + 1))
-          fi
-
-          new_tag="$major.$minor.$patch"
-          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
-
-      - name: Tag commit
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git tag ${{ steps.versioning.outputs.new_tag }}
-          git push origin ${{ steps.versioning.outputs.new_tag }}
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag ${{ steps.semver.outputs.version }}
+          git push origin ${{ steps.semver.outputs.version }}
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -90,5 +115,6 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker build -t $REGISTRY/$IMAGE_NAME:${{ steps.versioning.outputs.new_tag }} .
-          docker push $REGISTRY/$IMAGE_NAME:${{ steps.versioning.outputs.new_tag }}
+          IMAGE=ghcr.io/${{ github.repository }}:${{ steps.semver.outputs.version }}
+          docker build -t $IMAGE .
+          docker push $IMAGE
