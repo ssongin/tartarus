@@ -1,0 +1,94 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-build-tag-push:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binary
+        run: go build -o app ./...
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          git fetch --tags
+          TAG=$(git tag --sort=-v:refname | head -n 1)
+          if [[ -z "$TAG" ]]; then
+            echo "version=0.0.0" >> $GITHUB_OUTPUT
+          else
+            echo "version=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate commit message prefix
+        id: commit_check
+        run: |
+          msg=$(git log -1 --pretty=%B | tr '[:upper:]' '[:lower:]')
+          echo "commit_msg=$msg" >> $GITHUB_OUTPUT
+
+          if [[ "$msg" =~ ^(epic|major|feat|fix|build|chore|docs|perf|refactor|revert|style|test|cicd) ]]; then
+            echo "Commit message prefix is valid: $msg"
+          else
+            echo "❌ Invalid commit prefix: $msg"
+            exit 1
+          fi
+
+      - name: Determine new version
+        id: versioning
+        run: |
+          version="${{ steps.get_tag.outputs.version }}"
+          major=$(echo $version | cut -d. -f1)
+          minor=$(echo $version | cut -d. -f2)
+          patch=$(echo $version | cut -d. -f3)
+          msg="${{ steps.commit_check.outputs.commit_msg }}"
+
+          if [[ "$msg" == epic* || "$msg" == major* ]]; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+          elif [[ "$msg" == feat* ]]; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          new_tag="$major.$minor.$patch"
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+
+      - name: Tag commit
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag ${{ steps.versioning.outputs.new_tag }}
+          git push origin ${{ steps.versioning.outputs.new_tag }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t $REGISTRY/$IMAGE_NAME:${{ steps.versioning.outputs.new_tag }} .
+          docker push $REGISTRY/$IMAGE_NAME:${{ steps.versioning.outputs.new_tag }}
