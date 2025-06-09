@@ -27,6 +27,13 @@ jobs:
           COMMIT_MSG="${{ steps.commit.outputs.message }}"
           echo "Commit message: $COMMIT_MSG"
 
+          shopt -s nocasematch
+
+          if [[ "$COMMIT_MSG" =~ ^merge ]]; then
+            echo "ℹ️ Merge commit detected — skipping validation."
+            exit 0
+          fi
+
           if [[ "$COMMIT_MSG" =~ ^(epic|major|feat|fix|build|chore|perf|refactor|revert|style|cicd|docs|test)\b ]]; then
             echo "✅ Valid commit prefix"
           else
@@ -63,9 +70,9 @@ jobs:
           COMMIT_MSG=$(git log -1 --pretty=%s)
           echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
 
-      - name: Skip version bump for docs/test
-        if: startsWith(steps.commit.outputs.message, 'docs') || startsWith(steps.commit.outputs.message, 'test')
-        run: echo "Skipping version bump and Docker image for docs/test commit" && exit 0
+      - name: Skip version bump for docs/test/Merge
+        if: startsWith(steps.commit.outputs.message, 'docs') || startsWith(steps.commit.outputs.message, 'test') || startsWith(steps.commit.outputs.message, 'Merge')
+        run: echo "Skipping version bump and Docker image for docs/test/Merge commit" && exit 0
 
       - name: Get latest tag
         id: version
@@ -85,7 +92,7 @@ jobs:
             epic*|major*) major=$((major + 1)); minor=0; patch=0 ;;
             feat*) minor=$((minor + 1)); patch=0 ;;
             fix*|build*|chore*|perf*|refactor*|revert*|style*|cicd*) patch=$((patch + 1)) ;;
-            docs*|test*) echo "No version bump"; exit 0 ;;
+            docs*|test*|Merge*) echo "No version bump"; exit 0 ;;
             *) echo "Invalid commit prefix"; exit 1 ;;
           esac
 
