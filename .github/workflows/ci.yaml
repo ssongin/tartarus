@@ -34,7 +34,7 @@ jobs:
             exit 0
           fi
 
-          if [[ "$COMMIT_MSG" =~ ^(epic|major|feat|fix|build|chore|perf|refactor|revert|style|cicd|docs|test)\b ]]; then
+          if [[ "$COMMIT_MSG" =~ ^(epic|major|feat|fix|build|chore|perf|refactor|revert|style|cicd|docs|test)(\([^\)]*\))?: ]]; then
             echo "✅ Valid commit prefix"
           else
             echo "❌ Invalid commit prefix"
